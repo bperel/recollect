@@ -24,25 +24,17 @@
       class="viewer bottom left"
       style="background-image: url('/images/depth/stockholm2.png')"
     >
-      <div
-        v-for="({ min, max, step }, parameterName) in parameters"
+      <ParameterSlider
+        v-for="({ min, max, step, value }, parameterName) in parameters"
         :key="parameterName"
-        class="d-flex parameter"
-      >
-        {{ parameterName }}:
-        <b-form-input
-          :value="parameters[parameterName].value"
-          class="mx-3"
-          type="range"
-          :min="min"
-          :max="max"
-          :step="step"
-          @input="parameters[parameterName].value = parseInt($event)"
-        />
-        <b-button size="sm" @click="superimposeImages(parameterName)">
-          <b-icon-lightning-fill />
-        </b-button>
-      </div>
+        :name="parameterName"
+        :min="min"
+        :max="max"
+        :step="step"
+        :value="value"
+        @change="parameters[parameterName].value = value"
+        @auto="superimposeImages(parameterName)"
+      />
     </div>
     <div
       id="depth2"
@@ -58,7 +50,7 @@ import interact from "interactjs";
 import Vue from "vue";
 import InputImage from "@/components/InputImage";
 import calibrationPointMixin from "@/mixins/calibrationPointMixin";
-import { BIconLightningFill } from "bootstrap-vue";
+import ParameterSlider from "@/components/ParameterSlider";
 
 const parameters = {
   zoom: { default: 1, min: 0.1, step: 0.1, max: 3, value: 1 },
@@ -70,7 +62,7 @@ export default {
   name: "Calibrate",
 
   components: {
-    BIconLightningFill,
+    ParameterSlider,
     InputImage,
     MapillaryCalibration,
   },
@@ -95,16 +87,13 @@ export default {
       },
     ],
     parameters,
+    scores: {},
   }),
 
   computed: {
     distanceBetweenCalibrationPoints() {
       console.log("zoom=" + this.parameters.zoom.value);
-      return this.getDistanceDiffBetweenInputAndReference({
-        zoom: this.parameters.zoom.value,
-        paddingX: this.parameters.paddingX.value,
-        paddingY: this.parameters.paddingY.value,
-      });
+      return this.calculateDistanceDiffBetweenInputAndReference({});
     },
 
     calibratedInputPoints() {
@@ -119,8 +108,15 @@ export default {
       const value = this.calibrationPoints.filter(
         (calibrationPoint) => !!calibrationPoint.input && !!calibrationPoint.reference
       );
-      console.log(value);
       return value;
+    },
+
+    currentValues() {
+      return {
+        zoom: this.parameters.zoom.value,
+        paddingX: this.parameters.paddingX.value,
+        paddingY: this.parameters.paddingY.value,
+      };
     },
   },
 
@@ -167,8 +163,6 @@ export default {
       calibrationPointType,
       parameters = { zoom: 1, paddingX: 0, paddingY: 0 }
     ) {
-      console.log(parameters);
-
       const calibrationPointsWithBothTypes = this.calibrationPointsWithBothTypes;
       const points =
         calibrationPointType === "input"
@@ -194,12 +188,25 @@ export default {
         .reduce((acc, singleDistance) => acc + singleDistance, 0);
     },
 
-    getDistanceDiffBetweenInputAndReference(parameters) {
-      console.log(parameters);
-      return Math.abs(
-        this.getDistanceBetweenCalibrationPoints("input", parameters) -
-          this.getDistanceBetweenCalibrationPoints("reference")
+    calculateDistanceDiffBetweenInputAndReference(parameters) {
+      parameters = { ...this.currentValues, ...parameters };
+
+      return this.addScore(
+        parameters,
+        Math.abs(
+          this.getDistanceBetweenCalibrationPoints("input", parameters) -
+            this.getDistanceBetweenCalibrationPoints("reference")
+        )
       );
+    },
+
+    addScore(parameters, score) {
+      this.scores[JSON.stringify({ ...this.currentValues, ...parameters })] = score;
+      return score;
+    },
+
+    getScore(parameters) {
+      return this.scores[JSON.stringify({ ...this.currentValues, ...parameters })];
     },
 
     superimposeImages(parameter) {
@@ -210,62 +217,50 @@ export default {
       // Derivative : (−2 * Y1input * (Y1ref − Y1input * Z) −2 * X1input * (X1ref − X1input * Z)) / (2 * sqrt((Y1ref − Y1input * Z)² + (X1ref − X1input * Z)²))
       // Zero found at: (Y1ref * X1input + X1ref * X1input)/(X1input² + X1input²)
 
-      const currentValues = {
-        zoom: this.parameters.zoom.value,
-        paddingX: this.parameters.paddingX.value,
-        paddingY: this.parameters.paddingY.value,
-      };
-
       let minimumValue = this.parameters[parameter].min;
       let maximumValue = this.parameters[parameter].max;
-      let distances = {
-        [minimumValue]: this.getDistanceDiffBetweenInputAndReference({
-          ...currentValues,
-          [parameter]: minimumValue,
-        }),
-        [maximumValue]: this.getDistanceDiffBetweenInputAndReference({
-          ...currentValues,
-          [parameter]: maximumValue,
-        }),
-      };
+      this.calculateDistanceDiffBetweenInputAndReference({
+        [parameter]: minimumValue,
+      });
+      this.calculateDistanceDiffBetweenInputAndReference({
+        [parameter]: maximumValue,
+      });
 
       let value;
       for (let i = 0; i < 10; i++) {
         value = (minimumValue + maximumValue) / 2;
-        console.debug(`${parameter} = ${value}`);
-        const distance = this.getDistanceDiffBetweenInputAndReference({
-          ...currentValues,
+        let score = this.calculateDistanceDiffBetweenInputAndReference({
           [parameter]: value,
         });
-        console.debug(`distance=${distance}`);
-        distances[value] = distance;
-        if (distances[minimumValue] < distance && distance < distances[maximumValue]) {
+        console.debug(`${parameter} = ${value}, score=${score}`);
+        if (
+          this.getScore({ [parameter]: minimumValue }) < score &&
+          score < this.getScore({ [parameter]: maximumValue })
+        ) {
           maximumValue = value;
         } else {
-          console.debug(
-            `distances[${minimumValue}]=${distances[minimumValue]}, distance=${distance}, distances[${maximumValue}]=${distances[maximumValue]}`
-          );
           let intermediateValue1 = minimumValue + (maximumValue - minimumValue) / 4;
           let intermediateValue2 = minimumValue + (3 * (maximumValue - minimumValue)) / 4;
           for (const intermediateValue of [intermediateValue1, intermediateValue2]) {
-            console.debug(` intermediate ${parameter} = ${intermediateValue}`);
-            distances[intermediateValue] = this.getDistanceDiffBetweenInputAndReference({
-              ...currentValues,
+            score = this.calculateDistanceDiffBetweenInputAndReference({
               [parameter]: intermediateValue,
             });
-            console.debug(` intermediate ${parameter} distance=${distances[intermediateValue]}`);
+            console.debug(` intermediate ${parameter} = ${intermediateValue}, score=${score}`);
           }
-          if (distances[intermediateValue1] < distances[intermediateValue2]) {
+          if (
+            this.getScore({ [parameter]: intermediateValue1 }) <
+            this.getScore({ [parameter]: intermediateValue2 })
+          ) {
             minimumValue = intermediateValue1;
             maximumValue = value;
           } else {
             minimumValue = value;
             maximumValue = intermediateValue2;
           }
+          console.debug(`New intervals: ${minimumValue},${maximumValue}`);
         }
       }
 
-      console.log(distances);
       this.parameters[parameter].value = value;
     },
   },
