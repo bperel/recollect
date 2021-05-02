@@ -32,7 +32,8 @@
         :max="max"
         :step="step"
         :value="value"
-        @change="parameters[parameterName].value = value"
+        :scores="getScoresForParameter(parameterName)"
+        @change="setParameterValue(parameterName, $event)"
         @auto="superimposeImages(parameterName)"
       />
     </div>
@@ -146,6 +147,30 @@ export default {
 
     getCalibrationPointsByType(type) {
       return this.calibrationPoints.filter((calibrationPoint) => !!calibrationPoint[type]);
+    },
+
+    setParameterValue(name, value) {
+      Vue.set(this.parameters, name, { ...this.parameters[name], value });
+    },
+
+    getScoresForParameter(parameterName) {
+      const vm = this;
+      return Object.keys(this.scores)
+        .filter((scoreParameters) => {
+          scoreParameters = JSON.parse(scoreParameters);
+          return Object.keys(scoreParameters).some(
+            (scoreParameterName) =>
+              scoreParameterName !== parameterName &&
+              scoreParameters[scoreParameterName] === vm.parameters[scoreParameterName].value
+          );
+        })
+        .reduce(
+          (acc, scoreParameters) => ({
+            ...acc,
+            [JSON.parse(scoreParameters)[parameterName]]: vm.scores[scoreParameters],
+          }),
+          {}
+        );
     },
 
     getCalibratedInputPoints(parameters) {
@@ -343,9 +368,5 @@ body {
     pointer-events: none;
     opacity: 0.2;
   }
-}
-
-.parameter {
-  color: white;
 }
 </style>
