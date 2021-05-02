@@ -32,7 +32,7 @@
         :max="max"
         :step="step"
         :value="value"
-        :scores="getScoresForParameter(parameterName)"
+        :scores="scoresPerParameter[parameterName]"
         @change="setParameterValue(parameterName, $event)"
         @auto="superimposeImages(parameterName)"
       />
@@ -93,7 +93,6 @@ export default {
 
   computed: {
     distanceBetweenCalibrationPoints() {
-      console.log("zoom=" + this.parameters.zoom.value);
       return this.calculateDistanceDiffBetweenInputAndReference({});
     },
 
@@ -106,10 +105,9 @@ export default {
     },
 
     calibrationPointsWithBothTypes() {
-      const value = this.calibrationPoints.filter(
+      return this.calibrationPoints.filter(
         (calibrationPoint) => !!calibrationPoint.input && !!calibrationPoint.reference
       );
-      return value;
     },
 
     currentValues() {
@@ -118,6 +116,32 @@ export default {
         paddingX: this.parameters.paddingX.value,
         paddingY: this.parameters.paddingY.value,
       };
+    },
+
+    scoresPerParameter() {
+      const vm = this;
+      return Object.keys(this.parameters).reduce(
+        (acc, parameterName) => ({
+          ...acc,
+          [parameterName]: Object.keys(this.scores)
+            .filter((scoreParameters) => {
+              scoreParameters = JSON.parse(scoreParameters);
+              return Object.keys(scoreParameters).some(
+                (scoreParameterName) =>
+                  scoreParameterName !== parameterName &&
+                  scoreParameters[scoreParameterName] === vm.parameters[scoreParameterName].value
+              );
+            })
+            .reduce(
+              (acc, scoreParameters) => ({
+                ...acc,
+                [JSON.parse(scoreParameters)[parameterName]]: vm.scores[scoreParameters],
+              }),
+              {}
+            ),
+        }),
+        {}
+      );
     },
   },
 
@@ -153,26 +177,6 @@ export default {
       Vue.set(this.parameters, name, { ...this.parameters[name], value });
     },
 
-    getScoresForParameter(parameterName) {
-      const vm = this;
-      return Object.keys(this.scores)
-        .filter((scoreParameters) => {
-          scoreParameters = JSON.parse(scoreParameters);
-          return Object.keys(scoreParameters).some(
-            (scoreParameterName) =>
-              scoreParameterName !== parameterName &&
-              scoreParameters[scoreParameterName] === vm.parameters[scoreParameterName].value
-          );
-        })
-        .reduce(
-          (acc, scoreParameters) => ({
-            ...acc,
-            [JSON.parse(scoreParameters)[parameterName]]: vm.scores[scoreParameters],
-          }),
-          {}
-        );
-    },
-
     getCalibratedInputPoints(parameters) {
       const { zoom, paddingX, paddingY } = parameters;
 
@@ -188,7 +192,13 @@ export default {
       calibrationPointType,
       parameters = { zoom: 1, paddingX: 0, paddingY: 0 }
     ) {
-      const calibrationPointsWithBothTypes = this.calibrationPointsWithBothTypes;
+      // Distance formula : sqrt((X1ref - Z * X1input)² + (Y1ref - Z * Y1input)²) where Z is the zoom
+      // with 2 points: sqrt(((a) - (x*(b)))^2 + ((c) - (x*(d)))^2) + sqrt(((f) - (x*(g)))^2 + ((h) - (x*(j)))^2)
+      // Whatever the number of points, the formula will always have a minimum, so we can simply approximate the minimum value
+      // by running the formula against different values of Z until we consider that we're close enough
+      // Derivative : (−2 * Y1input * (Y1ref − Y1input * Z) −2 * X1input * (X1ref − X1input * Z)) / (2 * sqrt((Y1ref − Y1input * Z)² + (X1ref − X1input * Z)²))
+      // Zero found at: (Y1ref * X1input + X1ref * X1input)/(X1input² + X1input²)
+      const { calibrationPointsWithBothTypes } = this;
       const points =
         calibrationPointType === "input"
           ? this.getCalibratedInputPoints(parameters)
@@ -226,7 +236,7 @@ export default {
     },
 
     addScore(parameters, score) {
-      this.scores[JSON.stringify({ ...this.currentValues, ...parameters })] = score;
+      Vue.set(this.scores, JSON.stringify({ ...this.currentValues, ...parameters }), score);
       return score;
     },
 
@@ -235,55 +245,80 @@ export default {
     },
 
     superimposeImages(parameter) {
-      // Distance formula : sqrt((X1ref - Z * X1input)² + (Y1ref - Z * Y1input)²) where Z is the zoom
-      // with 2 points: sqrt(((a) - (x*(b)))^2 + ((c) - (x*(d)))^2) + sqrt(((f) - (x*(g)))^2 + ((h) - (x*(j)))^2)
-      // Whatever the number of points, the formula will always have a minimum, so we can simply approximate the minimum value
-      // by running the formula against different values of Z until we consider that we're close enough
-      // Derivative : (−2 * Y1input * (Y1ref − Y1input * Z) −2 * X1input * (X1ref − X1input * Z)) / (2 * sqrt((Y1ref − Y1input * Z)² + (X1ref − X1input * Z)²))
-      // Zero found at: (Y1ref * X1input + X1ref * X1input)/(X1input² + X1input²)
-
-      let minimumValue = this.parameters[parameter].min;
-      let maximumValue = this.parameters[parameter].max;
-      this.calculateDistanceDiffBetweenInputAndReference({
-        [parameter]: minimumValue,
-      });
-      this.calculateDistanceDiffBetweenInputAndReference({
-        [parameter]: maximumValue,
-      });
-
       let value;
-      for (let i = 0; i < 10; i++) {
-        value = (minimumValue + maximumValue) / 2;
-        let score = this.calculateDistanceDiffBetweenInputAndReference({
-          [parameter]: value,
-        });
-        console.debug(`${parameter} = ${value}, score=${score}`);
-        if (
-          this.getScore({ [parameter]: minimumValue }) < score &&
-          score < this.getScore({ [parameter]: maximumValue })
-        ) {
-          maximumValue = value;
-        } else {
-          let intermediateValue1 = minimumValue + (maximumValue - minimumValue) / 4;
-          let intermediateValue2 = minimumValue + (3 * (maximumValue - minimumValue)) / 4;
-          for (const intermediateValue of [intermediateValue1, intermediateValue2]) {
-            score = this.calculateDistanceDiffBetweenInputAndReference({
-              [parameter]: intermediateValue,
+
+      switch (parameter) {
+        case "paddingX":
+        case "paddingY":
+          const axis = parameter === "paddingX" ? 0 : 1;
+          const points = {
+            input: this.getCalibratedInputPoints(this.currentValues),
+            reference: this.calibrationPointsWithBothTypes.map(
+              ({ reference: referencePoint }) => referencePoint
+            ),
+          };
+          let averagePosition = {};
+          for (const source of Object.keys(points)) {
+            averagePosition[source] =
+              points[source].reduce((acc, { pixelPoint }) => acc + pixelPoint[axis], 0) /
+              points[source].length;
+          }
+          value = this.currentValues[parameter] + averagePosition.reference - averagePosition.input;
+          points.input = this.getCalibratedInputPoints({
+            ...this.currentValues,
+            [parameter]: value,
+          });
+          this.addScore(
+            { [parameter]: value },
+            points.input.reduce(
+              (acc, { pixelPoint }, index) =>
+                acc + Math.abs(pixelPoint[axis] - points.reference[index].pixelPoint[axis]),
+              0
+            )
+          );
+          break;
+        case "zoom":
+          let minimumValue = this.parameters[parameter].min;
+          let maximumValue = this.parameters[parameter].max;
+          for (const extremeValue of [minimumValue, maximumValue]) {
+            this.calculateDistanceDiffBetweenInputAndReference({
+              [parameter]: extremeValue,
             });
-            console.debug(` intermediate ${parameter} = ${intermediateValue}, score=${score}`);
           }
-          if (
-            this.getScore({ [parameter]: intermediateValue1 }) <
-            this.getScore({ [parameter]: intermediateValue2 })
-          ) {
-            minimumValue = intermediateValue1;
-            maximumValue = value;
-          } else {
-            minimumValue = value;
-            maximumValue = intermediateValue2;
+
+          for (let i = 0; i < 10; i++) {
+            value = (minimumValue + maximumValue) / 2;
+            let score = this.calculateDistanceDiffBetweenInputAndReference({
+              [parameter]: value,
+            });
+            console.debug(`${parameter} = ${value}, score=${score}`);
+            if (
+              this.getScore({ [parameter]: minimumValue }) < score &&
+              score < this.getScore({ [parameter]: maximumValue })
+            ) {
+              maximumValue = value;
+            } else {
+              let intermediateValue1 = minimumValue + (maximumValue - minimumValue) / 4;
+              let intermediateValue2 = minimumValue + (3 * (maximumValue - minimumValue)) / 4;
+              for (const intermediateValue of [intermediateValue1, intermediateValue2]) {
+                score = this.calculateDistanceDiffBetweenInputAndReference({
+                  [parameter]: intermediateValue,
+                });
+                console.debug(` intermediate ${parameter} = ${intermediateValue}, score=${score}`);
+              }
+              if (
+                this.getScore({ [parameter]: intermediateValue1 }) <
+                this.getScore({ [parameter]: intermediateValue2 })
+              ) {
+                minimumValue = intermediateValue1;
+                maximumValue = value;
+              } else {
+                minimumValue = value;
+                maximumValue = intermediateValue2;
+              }
+              console.debug(`New intervals: ${minimumValue},${maximumValue}`);
+            }
           }
-          console.debug(`New intervals: ${minimumValue},${maximumValue}`);
-        }
       }
 
       this.parameters[parameter].value = value;

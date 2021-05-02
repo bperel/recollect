@@ -99,6 +99,10 @@ export default {
     },
   },
 
+  mounted() {
+    this.$emit("change", this.value);
+  },
+
   methods: {
     interpolateColor(c0, c1, f) {
       c0 = c0.match(/.{1,2}/g).map((oct) => parseInt(oct, 16) * (1 - f));
