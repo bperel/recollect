@@ -4,6 +4,10 @@
     :style="{
       backgroundImage: 'url(\'' + inputImage + '\')',
       backgroundPosition: inputImagePanInPx,
+      marginLeft: `${paddingX}px`,
+      marginTop: `${paddingY}px`,
+      width: `${50 * zoom}%`,
+      opacity,
     }"
     @dragend.prevent="() => {}"
     @click.exact="
@@ -17,7 +21,7 @@
         v-for="(calibrationPoint, index) in calibrationPoints"
         :key="`calibration-point-${index}-input`"
         class="calibration-point"
-        :style="getCalibrationPointMargins(calibrationPoint.input)"
+        :style="getCalibrationPointMargins(calibrationPoint.input, zoom)"
       >
         {{ index + 1 }}
       </span></template
@@ -47,6 +51,22 @@ export default {
     calibrationPoints: {
       type: Array,
       required: true,
+    },
+    opacity: {
+      type: Number,
+      default: 1,
+    },
+    zoom: {
+      type: Number,
+      default: 1,
+    },
+    paddingX: {
+      type: Number,
+      default: 0,
+    },
+    paddingY: {
+      type: Number,
+      default: 0,
     },
   },
 

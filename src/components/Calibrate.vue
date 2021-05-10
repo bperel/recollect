@@ -11,7 +11,11 @@
     </span>
     <InputImage
       :css-classes="{ viewer: true, top: true, left: true, overlay: true }"
-      :calibration-points="calibratedInputPoints"
+      :opacity="overlayOpacity"
+      :zoom="parameters.zoom.value"
+      :padding-x="parameters.paddingX.value"
+      :padding-y="parameters.paddingY.value"
+      :calibration-points="getCalibrationPointsByType('input')"
     />
     <InputImage
       interactive
@@ -36,6 +40,15 @@
         @change="setParameterValue(parameterName, $event)"
         @auto="superimposeImages(parameterName)"
       />
+      Overlay opacity :
+      <input
+        :value="overlayOpacity"
+        type="range"
+        min="0"
+        max="1"
+        step="0.1"
+        @input="overlayOpacity = parseFloat($event.target.value)"
+      />
     </div>
     <div
       id="depth2"
@@ -55,8 +68,8 @@ import ParameterSlider from "@/components/ParameterSlider";
 
 const parameters = {
   zoom: { default: 1, min: 0.1, step: 0.1, max: 3, value: 1 },
-  paddingX: { default: 0, min: 0, step: 1, max: 500, value: 0 },
-  paddingY: { default: 0, min: 0, step: 1, max: 500, value: 0 },
+  paddingX: { default: 0, min: -250, step: 1, max: 250, value: 0 },
+  paddingY: { default: 0, min: -250, step: 1, max: 250, value: 0 },
 };
 
 export default {
@@ -74,34 +87,27 @@ export default {
     calibrationPoints: [
       {
         reference: {
-          latLon: { lat: 55.60791959363544, lon: 12.995770352486737 },
-          pixelPoint: [584, 228],
+          latLon: { lat: 55.60859144592081, lon: 12.995164231506969 },
+          pixelPoint: [305, 200],
         },
-        input: { pixelPoint: [331, 255] },
+        input: { pixelPoint: [339, 330] },
       },
       {
+        input: { pixelPoint: [650, 322] },
         reference: {
-          latLon: { lat: 55.60799819589218, lon: 12.9957852994826 },
-          pixelPoint: [667, 168],
+          latLon: { lat: 55.60838957030178, lon: 12.995690351491728 },
+          pixelPoint: [556, 186],
         },
-        input: { pixelPoint: [513, 146] },
       },
     ],
     parameters,
+    overlayOpacity: 0.7,
     scores: {},
   }),
 
   computed: {
     distanceBetweenCalibrationPoints() {
       return this.calculateDistanceDiffBetweenInputAndReference({});
-    },
-
-    calibratedInputPoints() {
-      return this.getCalibratedInputPoints({
-        zoom: this.parameters.zoom.value,
-        paddingX: this.parameters.paddingX.value,
-        paddingY: this.parameters.paddingY.value,
-      }).map((inputPoint) => ({ input: inputPoint }));
     },
 
     calibrationPointsWithBothTypes() {
