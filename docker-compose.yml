@@ -1,0 +1,7 @@
+services:
+  depth:
+    build:
+      context: docker/depth
+  pointcloud:
+    build:
+      context: docker/pointcloud
